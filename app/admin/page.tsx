@@ -8,8 +8,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Upload, Lock, AlertCircle, X } from "lucide-react"
-import { useState } from "react"
+import { Upload, Lock, AlertCircle, X, Trash2 } from "lucide-react"
+import { useState, useEffect } from "react"
+
+const API_URL = "http://localhost:8000"
 
 export default function AdminPage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
@@ -22,40 +24,27 @@ export default function AdminPage() {
     files: [] as File[],
   })
   const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({})
-  const [uploadedFiles, setUploadedFiles] = useState([
-    {
-      id: 1,
-      filename: "downtown_station_2024_01_15.mp4",
-      department: "Downtown Police Station",
-      timeRange: "2024-01-15 14:00 - 16:00",
-      status: "completed",
-      uploadDate: "2024-01-15 16:30",
-    },
-    {
-      id: 2,
-      filename: "airport_terminal_2024_01_15.mp4",
-      department: "Airport Security Unit",
-      timeRange: "2024-01-15 10:00 - 12:00",
-      status: "processing",
-      uploadDate: "2024-01-15 12:15",
-    },
-    {
-      id: 3,
-      filename: "highway_interchange_2024_01_14.mp4",
-      department: "Highway Patrol",
-      timeRange: "2024-01-14 18:00 - 20:00",
-      status: "failed",
-      uploadDate: "2024-01-14 20:45",
-    },
-    {
-      id: 4,
-      filename: "transit_hub_2024_01_14.mp4",
-      department: "Transit Authority",
-      timeRange: "2024-01-14 08:00 - 10:00",
-      status: "completed",
-      uploadDate: "2024-01-14 10:30",
-    },
-  ])
+  const [uploadedFiles, setUploadedFiles] = useState<any[]>([])
+  const [isUploading, setIsUploading] = useState(false)
+
+  // Fetch uploaded videos when logged in
+  useEffect(() => {
+    if (isLoggedIn) {
+      fetchUploadedVideos()
+    }
+  }, [isLoggedIn])
+
+  const fetchUploadedVideos = async () => {
+    try {
+      const response = await fetch(`${API_URL}/admin/videos`)
+      const data = await response.json()
+      if (data.success) {
+        setUploadedFiles(data.videos)
+      }
+    } catch (error) {
+      console.error("Error fetching videos:", error)
+    }
+  }
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault()
@@ -82,43 +71,91 @@ export default function AdminPage() {
     setUploadData({ ...uploadData, files: newFiles })
   }
 
-  const handleUpload = () => {
+  const handleUpload = async () => {
     if (!uploadData.department || !uploadData.location || uploadData.files.length === 0) {
       return
     }
 
-    // Simulate progress for each file
-    uploadData.files.forEach((file) => {
+    setIsUploading(true)
+
+    for (const file of uploadData.files) {
       const fileName = file.name
-      let progress = 0
+      
+      try {
+        // Create form data
+        const formData = new FormData()
+        formData.append("video", file)
+        formData.append("department", uploadData.department)
+        formData.append("location", uploadData.location)
+        formData.append("time_window", uploadData.timeWindow)
 
-      const interval = setInterval(() => {
-        progress += Math.random() * 30
-        if (progress > 100) progress = 100
+        // Simulate progress
+        const progressInterval = setInterval(() => {
+          setUploadProgress((prev) => {
+            const current = prev[fileName] || 0
+            const next = Math.min(current + Math.random() * 15, 95)
+            return { ...prev, [fileName]: next }
+          })
+        }, 300)
 
-        setUploadProgress((prev) => ({ ...prev, [fileName]: progress }))
+        // Upload to backend
+        const response = await fetch(`${API_URL}/admin/upload-video`, {
+          method: "POST",
+          body: formData,
+        })
 
-        if (progress >= 100) {
-          clearInterval(interval)
-          // Add file to uploaded list
-          const newUpload = {
-            id: uploadedFiles.length + 1,
-            filename: fileName,
-            department: uploadData.department,
-            timeRange: `${uploadData.timeWindow}`,
-            status: "processing",
-            uploadDate: new Date().toLocaleString(),
-          }
-          setUploadedFiles([newUpload, ...uploadedFiles])
+        clearInterval(progressInterval)
+
+        if (response.ok) {
+          const data = await response.json()
+          
+          // Set progress to 100%
+          setUploadProgress((prev) => ({ ...prev, [fileName]: 100 }))
+          
+          // Add to uploaded files list
+          setUploadedFiles((prev) => [data.metadata, ...prev])
+          
+          console.log("Upload successful:", data)
+        } else {
+          const error = await response.json()
+          console.error("Upload failed:", error)
+          alert(`Failed to upload ${fileName}: ${error.detail}`)
         }
-      }, 300)
-    })
+      } catch (error) {
+        console.error("Upload error:", error)
+        alert(`Error uploading ${fileName}`)
+      }
+    }
 
-    // Reset form after upload starts
+    // Reset form
     setTimeout(() => {
       setUploadData({ department: "", location: "", timeWindow: "2hours", files: [] })
       setUploadProgress({})
-    }, 2000)
+      setIsUploading(false)
+    }, 1000)
+  }
+
+  const handleDelete = async (videoId: string) => {
+    if (!confirm("Are you sure you want to delete this video?")) {
+      return
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/admin/videos/${videoId}`, {
+        method: "DELETE",
+      })
+
+      if (response.ok) {
+        setUploadedFiles((prev) => prev.filter((v) => v.id !== videoId))
+        alert("Video deleted successfully")
+      } else {
+        const error = await response.json()
+        alert(`Failed to delete: ${error.detail}`)
+      }
+    } catch (error) {
+      console.error("Delete error:", error)
+      alert("Error deleting video")
+    }
   }
 
   const getStatusBadge = (status: string) => {
@@ -142,6 +179,10 @@ export default function AdminPage() {
       default:
         return null
     }
+  }
+
+  const formatFileSize = (bytes: number) => {
+    return (bytes / 1024 / 1024).toFixed(2) + " MB"
   }
 
   if (!isLoggedIn) {
@@ -190,7 +231,7 @@ export default function AdminPage() {
 
                 {loginError && (
                   <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0" />
+                    <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 mt-0.5 shrink-0" />
                     <p className="text-xs text-red-700 dark:text-red-400">{loginError}</p>
                   </div>
                 )}
@@ -230,6 +271,36 @@ export default function AdminPage() {
             >
               Sign Out
             </Button>
+          </div>
+
+          {/* Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            <Card className="border border-border">
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground">Total Videos</p>
+                  <p className="text-3xl font-bold text-primary mt-2">{uploadedFiles.length}</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border border-border">
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground">Total Size</p>
+                  <p className="text-3xl font-bold text-primary mt-2">
+                    {formatFileSize(uploadedFiles.reduce((acc, v) => acc + (v.size || 0), 0))}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border border-border">
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground">API Status</p>
+                  <p className="text-lg font-bold text-green-600 mt-2">● Connected</p>
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
           {/* Upload Section */}
@@ -371,11 +442,11 @@ export default function AdminPage() {
                   !uploadData.department ||
                   !uploadData.location ||
                   uploadData.files.length === 0 ||
-                  Object.keys(uploadProgress).length > 0
+                  isUploading
                 }
               >
                 <Upload className="w-4 h-4 mr-2" />
-                Upload & Process Videos
+                {isUploading ? "Uploading..." : "Upload & Process Videos"}
               </Button>
             </CardContent>
           </Card>
@@ -393,9 +464,11 @@ export default function AdminPage() {
                     <tr className="border-b border-border">
                       <th className="text-left font-semibold text-foreground py-3 px-4">File Name</th>
                       <th className="text-left font-semibold text-foreground py-3 px-4">Department</th>
-                      <th className="text-left font-semibold text-foreground py-3 px-4">Time Range</th>
-                      <th className="text-left font-semibold text-foreground py-3 px-4">Upload Timestamp</th>
+                      <th className="text-left font-semibold text-foreground py-3 px-4">Location</th>
+                      <th className="text-left font-semibold text-foreground py-3 px-4">Size</th>
+                      <th className="text-left font-semibold text-foreground py-3 px-4">Upload Date</th>
                       <th className="text-left font-semibold text-foreground py-3 px-4">Status</th>
+                      <th className="text-left font-semibold text-foreground py-3 px-4">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -403,13 +476,33 @@ export default function AdminPage() {
                       <tr key={upload.id} className="border-b border-border hover:bg-secondary/5 transition-colors">
                         <td className="py-4 px-4 text-muted-foreground font-mono text-xs">{upload.filename}</td>
                         <td className="py-4 px-4 text-foreground text-sm">{upload.department}</td>
-                        <td className="py-4 px-4 text-muted-foreground text-xs">{upload.timeRange}</td>
-                        <td className="py-4 px-4 text-muted-foreground text-xs">{upload.uploadDate}</td>
+                        <td className="py-4 px-4 text-muted-foreground text-xs">{upload.location}</td>
+                        <td className="py-4 px-4 text-muted-foreground text-xs">
+                          {upload.size ? formatFileSize(upload.size) : "N/A"}
+                        </td>
+                        <td className="py-4 px-4 text-muted-foreground text-xs">
+                          {new Date(upload.upload_date).toLocaleString()}
+                        </td>
                         <td className="py-4 px-4">{getStatusBadge(upload.status)}</td>
+                        <td className="py-4 px-4">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDelete(upload.id)}
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                {uploadedFiles.length === 0 && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No videos uploaded yet. Upload your first video above.
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

@@ -7,25 +7,41 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Slider } from "@/components/ui/slider"
-import { Upload, Search, AlertCircle } from "lucide-react"
-import { useState } from "react"
+import { Upload, Search, AlertCircle, CheckCircle } from "lucide-react"
+import { useState, useEffect } from "react"
+
+const API_URL = "http://localhost:8000"
 
 export default function SearchPage() {
   const [imagePreview, setImagePreview] = useState<string | null>(null)
-  const [formData, setFormData] = useState({
-    name: "",
-    location: "",
-    clothing: "",
-    gender: "",
-    height: "",
-    ageRange: [18, 65],
-    notes: "",
-  })
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [shirtColor, setShirtColor] = useState("")
+  const [pantColor, setPantColor] = useState("none")
+  const [isSearching, setIsSearching] = useState(false)
+  const [searchResult, setSearchResult] = useState<any>(null)
+  const [availableVideos, setAvailableVideos] = useState<any[]>([])
+
+  // Fetch available videos on mount
+  useEffect(() => {
+    fetchAvailableVideos()
+  }, [])
+
+  const fetchAvailableVideos = async () => {
+    try {
+      const response = await fetch(`${API_URL}/search/available-videos`)
+      const data = await response.json()
+      if (data.success) {
+        setAvailableVideos(data.videos)
+      }
+    } catch (error) {
+      console.error("Error fetching videos:", error)
+    }
+  }
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
+      setImageFile(file)
       const reader = new FileReader()
       reader.onload = (event) => {
         setImagePreview(event.target?.result as string)
@@ -38,6 +54,7 @@ export default function SearchPage() {
     e.preventDefault()
     const file = e.dataTransfer.files?.[0]
     if (file && file.type.startsWith("image/")) {
+      setImageFile(file)
       const reader = new FileReader()
       reader.onload = (event) => {
         setImagePreview(event.target?.result as string)
@@ -46,8 +63,66 @@ export default function SearchPage() {
     }
   }
 
-  const handleSearch = () => {
-    console.log("Search initiated with data:", { ...formData, image: imagePreview ? "uploaded" : "none" })
+  const handleSearch = async () => {
+    if (!imageFile || !shirtColor) {
+      alert("Please upload an image and select shirt color")
+      return
+    }
+
+    if (availableVideos.length === 0) {
+      alert("No videos available for search. Please ask admin to upload CCTV footage first.")
+      return
+    }
+
+    setIsSearching(true)
+    setSearchResult(null)
+
+    try {
+      const formData = new FormData()
+      formData.append("target_photo", imageFile)
+      formData.append("shirt_color", shirtColor)
+      formData.append("pant_color", pantColor)
+
+      const response = await fetch(`${API_URL}/search-missing-person`, {
+        method: "POST",
+        body: formData,
+      })
+
+      if (response.ok) {
+        // Get the image blob
+        const blob = await response.blob()
+        const imageUrl = URL.createObjectURL(blob)
+
+        // Get metadata from headers
+        const videoId = response.headers.get("X-Video-ID")
+        const filename = response.headers.get("X-Video-Filename")
+        const location = response.headers.get("X-Location")
+        const department = response.headers.get("X-Department")
+
+        setSearchResult({
+          imageUrl,
+          found: true,
+          videoId,
+          filename,
+          location,
+          department,
+        })
+      } else {
+        const error = await response.json()
+        setSearchResult({
+          found: false,
+          message: error.detail || "No match found",
+        })
+      }
+    } catch (error) {
+      console.error("Search error:", error)
+      setSearchResult({
+        found: false,
+        message: "Error connecting to server. Please try again.",
+      })
+    } finally {
+      setIsSearching(false)
+    }
   }
 
   return (
@@ -59,7 +134,7 @@ export default function SearchPage() {
           <div className="mb-8">
             <h2 className="text-3xl font-bold text-foreground mb-2">Missing Person Search</h2>
             <p className="text-muted-foreground">
-              Upload details and search across CCTV feeds, reports, and social media
+              Upload a photo and search across {availableVideos.length} CCTV footage(s)
             </p>
           </div>
 
@@ -70,7 +145,7 @@ export default function SearchPage() {
               <Card className="border border-border">
                 <CardHeader>
                   <CardTitle className="text-lg">Upload Photo</CardTitle>
-                  <CardDescription>Drag & drop or click to upload image</CardDescription>
+                  <CardDescription>Upload a clear photo of the missing person</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div
@@ -81,11 +156,14 @@ export default function SearchPage() {
                     {imagePreview ? (
                       <div className="space-y-4">
                         <img
-                          src={imagePreview || "/placeholder.svg"}
+                          src={imagePreview}
                           alt="Preview"
                           className="w-full max-h-64 object-cover rounded"
                         />
-                        <Button variant="outline" onClick={() => setImagePreview(null)} className="w-full">
+                        <Button variant="outline" onClick={() => {
+                          setImagePreview(null)
+                          setImageFile(null)
+                        }} className="w-full">
                           Remove Image
                         </Button>
                       </div>
@@ -112,121 +190,146 @@ export default function SearchPage() {
                 </CardContent>
               </Card>
 
-              {/* Person Details Card */}
+              {/* Clothing Details Card */}
               <Card className="border border-border">
                 <CardHeader>
-                  <CardTitle className="text-lg">Person Details</CardTitle>
-                  <CardDescription>Provide information to refine search</CardDescription>
+                  <CardTitle className="text-lg">Clothing Description</CardTitle>
+                  <CardDescription>Provide clothing details to refine the search</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {/* Full Name */}
+                  {/* Shirt Color */}
                   <div>
-                    <Label htmlFor="name" className="text-sm font-medium text-foreground">
-                      Full Name <span className="text-muted-foreground">(Optional)</span>
-                    </Label>
-                    <Input
-                      id="name"
-                      placeholder="John Doe"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="mt-2"
-                    />
-                  </div>
-
-                  {/* Location */}
-                  <div>
-                    <Label htmlFor="location" className="text-sm font-medium text-foreground">
-                      Last Seen Location <span className="text-muted-foreground">(Optional)</span>
-                    </Label>
-                    <Input
-                      id="location"
-                      placeholder="City, District, Landmark"
-                      value={formData.location}
-                      onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                      className="mt-2"
-                    />
-                  </div>
-
-                  {/* Clothing Description */}
-                  <div>
-                    <Label htmlFor="clothing" className="text-sm font-medium text-foreground">
-                      Clothing Description <span className="text-muted-foreground">(Optional)</span>
-                    </Label>
-                    <Input
-                      id="clothing"
-                      placeholder="Blue jacket, black pants, white shoes"
-                      value={formData.clothing}
-                      onChange={(e) => setFormData({ ...formData, clothing: e.target.value })}
-                      className="mt-2"
-                    />
-                  </div>
-
-                  {/* Gender */}
-                  <div>
-                    <Label htmlFor="gender" className="text-sm font-medium text-foreground">
-                      Gender <span className="text-muted-foreground">(Optional)</span>
+                    <Label htmlFor="shirtColor" className="text-sm font-medium text-foreground">
+                      👕 Shirt Color <span className="text-red-500">*</span>
                     </Label>
                     <select
-                      id="gender"
-                      value={formData.gender}
-                      onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+                      id="shirtColor"
+                      value={shirtColor}
+                      onChange={(e) => setShirtColor(e.target.value)}
                       className="w-full mt-2 px-3 py-2 rounded-md border border-input bg-background text-foreground text-sm"
                     >
-                      <option value="">Select gender</option>
-                      <option value="male">Male</option>
-                      <option value="female">Female</option>
-                      <option value="other">Other</option>
+                      <option value="">Select shirt color...</option>
+                      <option value="black">Black</option>
+                      <option value="white">White</option>
+                      <option value="grey">Grey</option>
+                      <option value="red">Red</option>
+                      <option value="blue">Blue</option>
+                      <option value="green">Green</option>
+                      <option value="yellow">Yellow</option>
+                      <option value="beige">Beige</option>
+                      <option value="orange">Orange</option>
+                      <option value="navy">Navy</option>
                     </select>
                   </div>
 
-                  {/* Height */}
+                  {/* Pant Color */}
                   <div>
-                    <Label htmlFor="height" className="text-sm font-medium text-foreground">
-                      Height <span className="text-muted-foreground">(Optional)</span>
+                    <Label htmlFor="pantColor" className="text-sm font-medium text-foreground">
+                      👖 Pant Color <span className="text-muted-foreground">(Optional)</span>
                     </Label>
-                    <Input
-                      id="height"
-                      placeholder="e.g., 5'10 or 178 cm"
-                      value={formData.height}
-                      onChange={(e) => setFormData({ ...formData, height: e.target.value })}
-                      className="mt-2"
-                    />
-                  </div>
-
-                  {/* Age Range Slider */}
-                  <div>
-                    <Label className="text-sm font-medium text-foreground mb-4 block">
-                      Age Range: {formData.ageRange[0]} - {formData.ageRange[1]} years
-                    </Label>
-                    <Slider
-                      min={0}
-                      max={100}
-                      step={1}
-                      value={formData.ageRange}
-                      onValueChange={(value) => setFormData({ ...formData, ageRange: value as [number, number] })}
-                      className="w-full"
-                    />
-                  </div>
-
-                  {/* Additional Notes */}
-                  <div>
-                    <Label htmlFor="notes" className="text-sm font-medium text-foreground">
-                      Additional Notes <span className="text-muted-foreground">(Optional)</span>
-                    </Label>
-                    <textarea
-                      id="notes"
-                      placeholder="Any additional information relevant to the search..."
-                      value={formData.notes}
-                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                      className="w-full mt-2 px-3 py-2 rounded-md border border-input bg-background text-foreground text-sm resize-none h-24"
-                    />
+                    <select
+                      id="pantColor"
+                      value={pantColor}
+                      onChange={(e) => setPantColor(e.target.value)}
+                      className="w-full mt-2 px-3 py-2 rounded-md border border-input bg-background text-foreground text-sm"
+                    >
+                      <option value="none">None / Unknown</option>
+                      <option value="black">Black</option>
+                      <option value="white">White</option>
+                      <option value="grey">Grey</option>
+                      <option value="red">Red</option>
+                      <option value="blue">Blue</option>
+                      <option value="green">Green</option>
+                      <option value="yellow">Yellow</option>
+                      <option value="beige">Beige</option>
+                      <option value="orange">Orange</option>
+                      <option value="navy">Navy</option>
+                    </select>
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Search Result */}
+              {searchResult && (
+                <Card className="border border-border">
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      {searchResult.found ? (
+                        <>
+                          <CheckCircle className="w-5 h-5 text-green-600" />
+                          Match Found!
+                        </>
+                      ) : (
+                        <>
+                          <AlertCircle className="w-5 h-5 text-red-600" />
+                          No Match Found
+                        </>
+                      )}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {searchResult.found ? (
+                      <div className="space-y-4">
+                        <img
+                          src={searchResult.imageUrl}
+                          alt="Match Result"
+                          className="w-full rounded-lg border border-border"
+                        />
+                        <div className="bg-secondary/5 rounded-lg p-4 space-y-2">
+                          <p className="text-sm">
+                            <span className="font-semibold">Video:</span> {searchResult.filename}
+                          </p>
+                          <p className="text-sm">
+                            <span className="font-semibold">Location:</span> {searchResult.location}
+                          </p>
+                          <p className="text-sm">
+                            <span className="font-semibold">Department:</span> {searchResult.department}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-lg p-4">
+                        <p className="text-sm text-red-900 dark:text-red-400">
+                          {searchResult.message}
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
             </div>
 
             {/* Right: System Info & Search */}
             <div className="space-y-6">
+              {/* Available Videos */}
+              <Card className="border border-border">
+                <CardHeader>
+                  <CardTitle className="text-base">Available Videos</CardTitle>
+                  <CardDescription>{availableVideos.length} video(s) will be searched</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {availableVideos.length > 0 ? (
+                    <div className="space-y-3 max-h-60 overflow-y-auto">
+                      {availableVideos.map((video) => (
+                        <div key={video.id} className="p-3 bg-secondary/5 rounded-lg border border-border">
+                          <p className="text-xs font-semibold text-foreground truncate">{video.filename}</p>
+                          <p className="text-xs text-muted-foreground mt-1">{video.location}</p>
+                          <p className="text-xs text-muted-foreground">{video.department}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-6">
+                      <AlertCircle className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                      <p className="text-sm text-muted-foreground">No videos available</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Ask admin to upload CCTV footage
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* System Processing Info */}
               <Card className="border border-border">
                 <CardHeader>
@@ -235,52 +338,52 @@ export default function SearchPage() {
                 <CardContent className="space-y-4">
                   <div className="space-y-3">
                     <div className="flex gap-3">
-                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
                         <span className="text-xs font-bold text-primary">1</span>
                       </div>
                       <div>
-                        <p className="text-xs font-semibold text-foreground">OpenCV Preprocessing</p>
-                        <p className="text-xs text-muted-foreground mt-1">Image enhancement & noise reduction</p>
+                        <p className="text-xs font-semibold text-foreground">Face Detection</p>
+                        <p className="text-xs text-muted-foreground mt-1">MTCNN detects faces in photo</p>
                       </div>
                     </div>
 
                     <div className="flex gap-3">
-                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
                         <span className="text-xs font-bold text-primary">2</span>
                       </div>
                       <div>
-                        <p className="text-xs font-semibold text-foreground">MTCNN Face Detection</p>
-                        <p className="text-xs text-muted-foreground mt-1">Detect & align facial features</p>
+                        <p className="text-xs font-semibold text-foreground">Embedding Generation</p>
+                        <p className="text-xs text-muted-foreground mt-1">FaceNet creates face signature</p>
                       </div>
                     </div>
 
                     <div className="flex gap-3">
-                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
                         <span className="text-xs font-bold text-primary">3</span>
                       </div>
                       <div>
-                        <p className="text-xs font-semibold text-foreground">FaceNet Embeddings</p>
-                        <p className="text-xs text-muted-foreground mt-1">Generate 128D facial signature</p>
+                        <p className="text-xs font-semibold text-foreground">Video Search</p>
+                        <p className="text-xs text-muted-foreground mt-1">Scan all uploaded videos</p>
                       </div>
                     </div>
 
                     <div className="flex gap-3">
-                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
                         <span className="text-xs font-bold text-primary">4</span>
                       </div>
                       <div>
-                        <p className="text-xs font-semibold text-foreground">Kafka Streaming</p>
-                        <p className="text-xs text-muted-foreground mt-1">Route through real-time pipelines</p>
+                        <p className="text-xs font-semibold text-foreground">Clothing Match</p>
+                        <p className="text-xs text-muted-foreground mt-1">Color detection verification</p>
                       </div>
                     </div>
 
                     <div className="flex gap-3">
-                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                      <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
                         <span className="text-xs font-bold text-primary">5</span>
                       </div>
                       <div>
-                        <p className="text-xs font-semibold text-foreground">EAR Model Fusion</p>
-                        <p className="text-xs text-muted-foreground mt-1">Unified schema matching across sources</p>
+                        <p className="text-xs font-semibold text-foreground">Result Fusion</p>
+                        <p className="text-xs text-muted-foreground mt-1">70% face + 30% clothing score</p>
                       </div>
                     </div>
                   </div>
@@ -289,7 +392,7 @@ export default function SearchPage() {
 
               {/* Alert */}
               <div className="bg-blue-50/50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-lg p-4 flex gap-3">
-                <AlertCircle className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+                <AlertCircle className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
                 <p className="text-sm text-blue-900 dark:text-blue-400">
                   All searches are encrypted and logged for official investigations only.
                 </p>
@@ -299,36 +402,20 @@ export default function SearchPage() {
               <Button
                 onClick={handleSearch}
                 className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-11 text-base"
-                disabled={!imagePreview}
+                disabled={!imageFile || !shirtColor || isSearching || availableVideos.length === 0}
               >
-                <Search className="w-4 h-4 mr-2" />
-                Run Search Across All Sources
+                {isSearching ? (
+                  <>
+                    <div className="w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Searching...
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-4 h-4 mr-2" />
+                    Search Across {availableVideos.length} Video(s)
+                  </>
+                )}
               </Button>
-            </div>
-          </div>
-
-          {/* Results Section Placeholder */}
-          <div className="mt-12">
-            <h3 className="text-2xl font-bold text-foreground mb-6">Search Results</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Result Categories */}
-              {[
-                { category: "Matching Faces", count: 0, icon: "👤" },
-                { category: "Clothing Matches", count: 0, icon: "👕" },
-                { category: "Text/Social Media", count: 0, icon: "📱" },
-                { category: "Timeline Matches", count: 0, icon: "⏰" },
-              ].map((item) => (
-                <Card key={item.category} className="border border-border">
-                  <CardContent className="pt-6">
-                    <div className="text-center">
-                      <div className="text-4xl mb-2">{item.icon}</div>
-                      <p className="text-sm font-medium text-foreground">{item.category}</p>
-                      <p className="text-2xl font-bold text-primary mt-2">{item.count}</p>
-                      <p className="text-xs text-muted-foreground mt-1">Upload to begin search</p>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
             </div>
           </div>
         </div>
