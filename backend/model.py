@@ -1,13 +1,30 @@
 import cv2
 import numpy as np
 import os
+from sklearn.metrics.pairwise import cosine_similarity
+import warnings
+warnings.filterwarnings('ignore')
+
+# Suppress TensorFlow logging
+import logging
+logging.getLogger('tensorflow').setLevel(logging.ERROR)
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 0=all, 1=info, 2=warning, 3=error only
+
+# Suppress TensorFlow progress bars
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
+# Import TensorFlow and models
+import tensorflow as tf
+tf.get_logger().setLevel('ERROR')
+
 from mtcnn import MTCNN
 from keras_facenet import FaceNet
-from sklearn.metrics.pairwise import cosine_similarity
 
 # Initialize Models
+print("🔄 Loading face recognition models...")
 detector = MTCNN()
 embedder = FaceNet()
+print("✅ Models loaded successfully!")
 
 # --- TOOL 1: TEXT-BASED COLOR MATCHER ---
 def get_color_presence(image_crop, target_color_name):
